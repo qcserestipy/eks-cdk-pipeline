@@ -25,7 +25,7 @@ This project contains AWS Cloud Development Kit (CDK) code to deploy an Amazon E
 
 Configuration is managed through a JSON file. By default, the project uses a configuration file named `config.json` located in the `config` directory. You can specify a different configuration file by setting the `CDK_APP_CONFIG` environment variable.
 
-** Change the respective entries in the `config.json` **
+**Change the respective entries in the** `config.json`
 
 
 ## Add-ons and Functionality
