@@ -1,0 +1,51 @@
+{
+    "admin": {
+        "key_name": "YourKeyName",
+        "key_material": "ssh-rsa AAAAAAAABBBBBBBBBCCCCCCCDDDDDDD"
+    },
+    "accounts": {
+        "tooling": {
+            "id": "your_account_id"
+        },
+        "dev": {
+            "id": "your_account_id"
+        },
+        "prod": {
+            "id": "your_account_id"
+        }
+    },
+    "pipeline": {
+        "account": "tooling",
+        "region": "eu-central-1",
+        "repositoryname": "eks-cdk-pipeline",
+        "branchname": "main"
+    },
+    "monitoring": {
+        "target_region": "eu-central-1"
+    },
+    "eks": {
+        "version": "1.31.0",
+        "target_region": "eu-central-1",
+        "cluster_name": "EksCluster",
+        "deployment": [
+            {
+                "account": "tooling",
+                "regions": [
+                    "eu-central-1"
+                ]
+            },
+            {
+                "account": "dev",
+                "regions": [
+                    "eu-central-1"
+                ]
+            },
+            {
+                "account": "prod",
+                "regions": [
+                    "eu-central-1"
+                ]
+            }
+        ]
+    }
+}

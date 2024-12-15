@@ -1,0 +1,11 @@
+/* docs/stylesheets/overrides.css */
+
+/* Change navbar background color */
+.md-header {
+  background-color: #40403f !important;
+}
+
+/* Optional: Change navbar text color */
+.md-header__title, .md-header__title a, .md-header__button, .md-header__button .md-icon {
+  color: #ffffff !important;
+}

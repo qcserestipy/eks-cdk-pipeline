@@ -1,0 +1,93 @@
+site_name: EKS CDK Project Documentation 
+nav:
+  - Home: index.md
+  - Reference:
+    - Pipeline:
+      - PipelineStack: api/pipeline_stack.md
+      - Deployment Stages: api/stages.md
+    - EKS:
+      - Basic:
+        - EksIamStack: api/eks_iam_stack.md
+        - EksNetworkStack: api/eks_network_stack.md
+        - EksClusterStack: api/eks_cluster_stack.md
+        - EksSSMParametersStack: api/eks_ssm_parameters_stack.md
+      - Addons:
+        - EksCoreDnsAddOn: api/eks_core_dns_addon.md
+        - EksPodIdentityAddOn: api/eks_pod_identity_addon.md
+        - EksAwsAlbControllerAddOn: api/eks_aws_alb_controller_addon.md
+      - Auto-scaling:
+        - EksKarpenter: api/eks_karpenter.md
+      - Compute:
+        - EksBastionHost: api/eks_bastion_host.md
+        - EksNodeGroups: api/eks_node_groups.md
+    - Tooling:
+      - KeypairStack: api/keypair_stack.md
+      - EksHelmDeployWithPodIdentity: api/eks_helm_deploy_with_pod_identity.md
+
+theme:
+  name: material
+  features:
+    - toc.integrate
+    - navigation.instant
+    - content.code.copy
+    - content.tables.responsive
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+      primary:
+        main: '#D3D3D3'
+      accent:
+        main: '#E0E0E0'
+      font:
+        text: '#000000'
+      background:
+        primary: '#FFFFFF'
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+      primary:
+        main: '#007ACC'
+      accent:
+        main: '#569CD6'
+      font:
+        text: '#ffffff'
+      background:
+        primary: '#1E1E1E'
+
+
+plugins:
+  - search
+  - mkdocstrings
+markdown_extensions:
+  - admonition
+  - pymdownx.tabbed
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      linenums: true
+      linenums_style: inline
+  - attr_list
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/qcserestipy/eks-cdk-pipeline
+
+extra_css:
+  - stylesheets/overrides.css
