@@ -27,6 +27,45 @@ Configuration is managed through a JSON file. By default, the project uses a con
 
 ** Change the respective entries in the `config.json` **
 
+
+## Add-ons and Functionality
+
+### EBS CSI Driver
+The EBS CSI Driver allows EKS clusters to manage Amazon EBS volumes for persistent storage. This add-on can be enabled by uncommenting the following lines in `cluster.py`:
+```python
+self.eks_ebs_csi_driver_addon = EksEbsCSIDriverAddOn(
+    self,
+    "EksEbsCSIDriverAddOn",
+    cluster=self.cluster,
+)
+```
+
+### Cluster Autoscaler
+The Cluster Autoscaler automatically adjusts the size of the EKS cluster based on the resource usage and demand. This add-on can be enabled by uncommenting the following lines in `cluster.py`:
+```python
+self.eks_autoscaler = EksAwsClusterAutoscaler(
+    self,
+    "EksAwsClusterAutoscaler",
+    cluster=self.cluster,
+    region=self._region,
+    account=self._account,
+)
+```
+
+### Karpenter
+Karpenter is an open-source node provisioning project built for Kubernetes. It automatically launches just the right compute resources to handle your cluster's applications. This add-on is enabled by default in `cluster.py`:
+```python
+self.eks_karpenter = EksKarpenter(
+    self,
+    "EksKarpenterDeployConstruct",
+    cluster=self.cluster,
+    account=self._account,
+    region=self._region,
+)
+self.eks_karpenter.node.add_dependency(self.eks_node_groups)
+self.eks_karpenter.node.add_dependency(self.eks_alb_controller_addon)
+```
+
 # Deployment
 Install dependencies:
 
