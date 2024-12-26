@@ -11,18 +11,6 @@ from constructs import Construct
 from typing import Any
 
 class EksKarpenter(Construct):
-    """Deploys Karpenter for EKS cluster auto-scaling.
-
-    This construct installs Karpenter, providing efficient and flexible
-    auto-scaling capabilities for Kubernetes clusters.
-
-    Attributes:
-        cluster (eks.Cluster): The EKS cluster where Karpenter is deployed.
-        account (str): AWS account ID.
-        region (str): AWS region.
-        role (iam.Role): IAM role used by Karpenter.
-    """
-
     def __init__(
         self,
         scope: Construct,
@@ -32,66 +20,72 @@ class EksKarpenter(Construct):
         region: str,
         **kwargs: Any
     ) -> None:
-        """Initializes the EksKarpenter construct.
-
-        Args:
-            scope (Construct): The scope in which this construct is defined.
-            id (str): The scoped construct ID.
-            cluster (eks.Cluster): The EKS cluster to deploy Karpenter to.
-            account (str): AWS account ID.
-            region (str): AWS region.
-            **kwargs (Any): Additional keyword arguments.
-        """
         super().__init__(scope, id, **kwargs)
 
         self._region = region
         self._account = account
-        self._serviceaccountname = "karpenter"
+
+        # Create a dedicated service account for Karpenter using IRSA
         self._namespace = "karpenter"
         self._releasename = "karpenter"
-        self.role = self.create_role(cluster)
-        self.add_interruption_queue(cluster.cluster_name, self.role)
+        self._serviceaccountname = "karpenter"
+        namespace_manifest = cluster.add_manifest(
+            "KarpenterNamespace",
+            {
+                "apiVersion": "v1",
+                "kind": "Namespace",
+                "metadata": {
+                    "name": self._namespace
+                }
+            }
+        )
 
-        cluster.aws_auth.add_role_mapping(self.role, username='system:node:{{EC2PrivateDNSName}}' ,groups=["system:bootstrappers", "system:nodes"])
+        service_account = cluster.add_service_account(
+            "KarpenterServiceAccount",
+            name=self._serviceaccountname,
+            namespace=self._namespace
+        )
 
+        # enforce namespace is created before service account
+        service_account.node.add_dependency(namespace_manifest)
+
+        self.role = self.create_role(
+            cluster,
+            service_account.role,
+        )
+
+        cluster.aws_auth.add_role_mapping(
+            service_account.role,
+            username='system:node:{{EC2PrivateDNSName}}',
+            groups=[
+               "system:bootstrappers",
+               "system:nodes"
+            ]
+        )
+
+        # Create interruption queue and attach SQS policies
+        _ = self.add_interruption_queue(cluster.cluster_name, service_account.role)
+
+        # Deploy Karpenter via Helm, referencing the IRSA role
         karpenter_helm_chart = cluster.add_helm_chart("EksKarpenterHelmChart",
             chart="karpenter",
             repository="oci://public.ecr.aws/karpenter/karpenter",
-            version="1.0.0",
+            version="1.1.1",
             release=self._releasename,
-            create_namespace=True,
+            create_namespace=False,
             namespace=self._namespace,
             values={
                 "replicas": 1,
                 "serviceAccount": {
                     "name": self._serviceaccountname,
-                    "create": True,
+                    "create": False,  # We create it via CDK
                     "annotations": {
-                        "eks.amazonaws.com/role-arn": self.role.role_arn
+                        "eks.amazonaws.com/role-arn": service_account.role.role_arn
                     }
                 },
-                "controller": {
-                    "resources": {
-                        "limits": {
-                            "cpu": "200m",
-                            "memory": "256Mi"
-                        },
-                        "requests": {
-                            "cpu": "50m",
-                            "memory": "64Mi"
-                        }    
-                    } 
-                },
-                "settings":{
+                "settings": {
                     "clusterName": cluster.cluster_name,
                     "clusterEndpoint": cluster.cluster_endpoint,
-                },
-                "postInstallHook": {
-                    "image": {
-                        "repository": "docker.io/bitnami/kubectl",
-                        "tag": "1.30",
-                        "digest": "sha256:4f74249f971f8ca158a03eaa0c8e7741a2a750fe53525dc69497cf23584df04a"
-                    }
                 },
                 "affinity": {
                     "nodeAffinity": {
@@ -114,48 +108,31 @@ class EksKarpenter(Construct):
                 },
                 "tolerations": [
                     {
-                        "key": "purpose",
-                        "operator": "Equal",
-                        "value": "admin",
+                        "operator": "Exists",
                         "effect": "NoSchedule"
                     }
-                ],
-                "serviceMonitor": {
-                    "enabled": True
-                }
+                ]
+                # "serviceMonitor": {
+                #     "enabled": True,
+                #     "endpointConfig": {
+                #         "port": "8080",
+                #         "interval": "30s",
+                #         "scrapeTimeout": "10s",
+                #         "scheme": "http"
+                #     }
+                # }
             }
         )
+        karpenter_helm_chart.node.add_dependency(namespace_manifest)
+        karpenter_helm_chart.node.add_dependency(self.role)
 
-        cfn_sa_association = eks.CfnPodIdentityAssociation(self, "EksKarpenterPodIdentityAssociation",
-            cluster_name=cluster.cluster_name,
-            namespace=self._namespace,
-            role_arn=self.role.role_arn,
-            service_account=self._serviceaccountname,
-        )
-
-        cfn_sa_association.node.add_dependency(karpenter_helm_chart)
-
-    def create_role(self, cluster) -> iam.Role:
-        """Creates an IAM role for Karpenter with necessary permissions.
-
-        Args:
-            cluster (eks.Cluster): The EKS cluster where Karpenter is deployed.
-
-        Returns:
-            iam.Role: The IAM role used by Karpenter.
-        """
-        # Define the Karpenter IAM role
-        karpenter_role = iam.Role(
-            self, "EksKarpenterRole",
-            assumed_by=iam.ServicePrincipal("pods.eks.amazonaws.com"),
-            role_name=f"KarpenterNodeRole-{cluster.cluster_name}",
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEKSWorkerNodePolicy"),
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEKS_CNI_Policy"),
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ContainerRegistryReadOnly"),
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")
-            ]
-        )
+    def create_role(self, cluster, karpenter_role) -> iam.Role:
+        # Attach policies to the service account's role
+        # Add managed policies
+        karpenter_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEKSWorkerNodePolicy"))
+        karpenter_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEKS_CNI_Policy"))
+        karpenter_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ContainerRegistryReadOnly"))
+        karpenter_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore"))
         karpenter_role.assume_role_policy.add_statements(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -230,7 +207,7 @@ class EksKarpenter(Construct):
                 resources=["*"],
                 conditions={
                     "StringEquals": CfnJson(
-                        self, 
+                        self,
                         "ClusterNameTagCreateInstanceProfile",
                         value = {
                             f"aws:RequestTag/kubernetes.io/cluster/{cluster.cluster_name}": "owned",
@@ -253,7 +230,7 @@ class EksKarpenter(Construct):
             resources=["*"],
             conditions={
                 "StringEquals": CfnJson(
-                    self, 
+                    self,
                     "ResourceTagTagInstanceProfile",
                     value = {
                         "aws:ResourceTag/kubernetes.io/cluster/{}".format(cluster.cluster_name): "owned",
@@ -263,7 +240,7 @@ class EksKarpenter(Construct):
                     },
                 ),
                 "StringLike": CfnJson(
-                    self, 
+                    self,
                     "RequestTagTagInstanceProfile",
                     value = {
                         "aws:ResourceTag/karpenter.k8s.aws/ec2nodeclass": "*",
@@ -282,7 +259,7 @@ class EksKarpenter(Construct):
             resources=["*"],
             conditions={
                 "StringEquals": CfnJson(
-                    self, 
+                    self,
                     "TagAddRoleToInstanceProfile",
                     value = {
                         "aws:ResourceTag/kubernetes.io/cluster/{}".format(cluster.cluster_name): "owned",
@@ -434,55 +411,41 @@ class EksKarpenter(Construct):
         )
         return karpenter_role
 
-    def add_interruption_queue(self, cluster_name, role) -> sqs.Queue:
-        """Creates an SQS queue for handling EC2 instance interruptions and adds necessary permissions.
-
-        Args:
-            cluster_name (str): Name of the EKS cluster.
-            role (iam.Role): IAM role to which permissions will be added.
-
-        Returns:
-            sqs.Queue: The SQS queue for interruption events.
-        """
-        # Create the SQS queue to handle interruptions
+    def add_interruption_queue(self, cluster_name, role):
         interruption_queue = sqs.Queue(
-            self, 
+            self,
             "KarpenterInterruptionQueue",
             queue_name=cluster_name,
             retention_period=Duration.minutes(5)
         )
-        # Define the event rules
+
         rules = [
-            # ScheduledChangeRule
             events.Rule(
-                self, 
+                self,
                 "ScheduledChangeRule",
                 event_pattern={
                     "source": ["aws.health"],
                     "detail_type": ["AWS Health Event"]
                 }
             ),
-            # SpotInterruptionRule
             events.Rule(
-                self, 
+                self,
                 "SpotInterruptionRule",
                 event_pattern={
                     "source": ["aws.ec2"],
                     "detail_type": ["EC2 Spot Instance Interruption Warning"]
                 }
             ),
-            # RebalanceRule
             events.Rule(
-                self, 
+                self,
                 "RebalanceRule",
                 event_pattern={
                     "source": ["aws.ec2"],
                     "detail_type": ["EC2 Instance Rebalance Recommendation"]
                 }
             ),
-            # InstanceStateChangeRule
             events.Rule(
-                self, 
+                self,
                 "InstanceStateChangeRule",
                 event_pattern={
                     "source": ["aws.ec2"],
@@ -490,11 +453,11 @@ class EksKarpenter(Construct):
                 }
             )
         ]
-        # Add the SQS queue as a target for each rule
+
         for rule in rules:
             rule.add_target(targets.SqsQueue(interruption_queue))
 
-        # Add the necessary IAM policy statements for SQS access
+        # Allow Karpenter to access the interruption queue
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -509,42 +472,106 @@ class EksKarpenter(Construct):
 
         return interruption_queue
 
-    def add_ec2_node_class(self, id: str, spec: dict) -> eks.KubernetesManifest:
-        """Adds an EC2NodeClass to the cluster.
+    def add_ec2_node_class(
+            self,
+            id: str,
+            cluster,
+            subnet_id,
+            security_group_id,
+            name='default',
+        ) -> None:
+        return cluster.add_manifest(
+            id,
+            {
+                "apiVersion": "karpenter.k8s.aws/v1",
+                "kind": "EC2NodeClass",
+                "metadata": {
+                    "name": name,
+                },
+                "spec": {
+                    "amiFamily": "AL2023",
+                    "amiSelectorTerms": [
+                        {
+                            "alias": "al2023@latest"
+                        }
+                    ],
+                    "role": self.role.role_name,
+                    "subnetSelectorTerms": subnet_id,
+                    "securityGroupSelectorTerms": security_group_id,
+                }
+            }
+        )
 
-        Args:
-            id (str): Identifier for the EC2NodeClass resource.
-            spec (dict): Specification of the EC2NodeClass.
-
-        Returns:
-            eks.KubernetesManifest: The Kubernetes manifest for the EC2NodeClass.
-        """
-        return self.cluster_stack.cluster.add_manifest(id, {
-            "apiVersion": "karpenter.k8s.aws/v1beta1",
-            "kind": "EC2NodeClass",
-            "metadata": {
-                "name": id,
-                "namespace": self._namespace,
-            },
-            "spec": spec,
-        })
-
-    def add_node_pool(self, id: str, spec: dict) -> eks.KubernetesManifest:
-        """Adds a NodePool to the cluster.
-
-        Args:
-            id (str): Identifier for the NodePool resource.
-            spec (dict): Specification of the NodePool.
-
-        Returns:
-            eks.KubernetesManifest: The Kubernetes manifest for the NodePool.
-        """
-        return self.cluster_stack.cluster.add_manifest(id, {
-            "apiVersion": "karpenter.sh/v1beta1",
-            "kind": "NodePool",
-            "metadata": {
-                "name": id,
-                "namespace": self._namespace,
-            },
-            "spec": spec,
-        })
+    def add_node_pool(
+        self,
+        id: str,
+        cluster: eks.Cluster,
+        nodeclass_name: str,
+        labels: dict,
+        node_arch: list,
+        capacity_type: list,
+        instance_category: list,
+        instance_family: list,
+        cpu_limit: int,
+        mem_limit: str,
+    ) -> None:
+        return cluster.add_manifest(
+            id,
+            {
+                "apiVersion": "karpenter.sh/v1",
+                "kind": "NodePool",
+                "metadata": {
+                    "name": id
+                },
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "labels": labels
+                        },
+                        "spec": {
+                            "requirements": [
+                                {
+                                  "key": "kubernetes.io/arch",
+                                  "operator": "In",
+                                  "values": node_arch
+                                },
+                                {
+                                  "key": "kubernetes.io/os",
+                                  "operator": "In",
+                                  "values": ["linux"]
+                                },
+                                {
+                                  "key": "karpenter.sh/capacity-type",
+                                  "operator": "In",
+                                  "values": capacity_type
+                                },
+                                {
+                                  "key": "karpenter.k8s.aws/instance-category",
+                                  "operator": "In",
+                                  "values": instance_category
+                                },
+                                {
+                                  "key": "karpenter.k8s.aws/instance-family",
+                                  "operator": "In",
+                                  "values": instance_family
+                                }
+                            ],
+                            "nodeClassRef": {
+                              "group": "karpenter.k8s.aws",
+                              "kind": "EC2NodeClass",
+                              "name": nodeclass_name
+                            },
+                            "expireAfter": "5m"
+                        }
+                    },
+                    "limits": {
+                        "cpu": cpu_limit,
+                        "memory": mem_limit
+                    },
+                    "disruption": {
+                        "consolidationPolicy": "WhenEmptyOrUnderutilized",
+                        "consolidateAfter": "1m"
+                    }
+                }
+            }
+        )
